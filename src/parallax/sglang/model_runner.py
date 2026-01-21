@@ -228,6 +228,10 @@ def form_sgl_server_args(
     chunked_prefill_size: Optional[int] = None,
 ):
     """Creates a SGL ServerArgs object"""
+    logger.debug(
+        f"Creating SGL ServerArgs with chunked_prefill_size={chunked_prefill_size} "
+        f"(None means sglang will use default value based on GPU memory)"
+    )
     sgl_server_args = ServerArgs(
         model_path=model_path,
         dtype=dtype,
@@ -250,6 +254,17 @@ def form_sgl_server_args(
         dp_size=dp_size,
         chunked_prefill_size=chunked_prefill_size,
     )
+    # Check if chunked prefill is enabled in ServerArgs
+    actual_chunked_prefill_size = getattr(sgl_server_args, "chunked_prefill_size", None)
+    if actual_chunked_prefill_size is not None:
+        logger.debug(
+            f"SGLang chunked prefill is ENABLED with chunk_size={actual_chunked_prefill_size}"
+        )
+    else:
+        logger.debug(
+            "SGLang chunked prefill is DISABLED (chunked_prefill_size=None, "
+            "sglang will use default behavior)"
+        )
     return sgl_server_args
 
 
@@ -322,6 +337,9 @@ def initialize_sgl_model_runner(
         logger.debug(f"Qwen3-Next model detected, setting kv_block_size to 1")
         kv_block_size = 1
 
+    logger.debug(
+        f"Initializing SGL model runner with chunked_prefill_size={chunked_prefill_size}"
+    )
     server_args = form_sgl_server_args(
         str(model_path),
         dtype,
@@ -360,6 +378,19 @@ def initialize_sgl_model_runner(
 
     logger.debug(f"model_start_layer: {model_config.hf_config.start_layer}")
     logger.debug(f"model_end_layer: {model_config.hf_config.end_layer}")
+
+    # Final check: verify chunked prefill status in server_args
+    final_chunked_prefill_size = getattr(server_args, "chunked_prefill_size", None)
+    if final_chunked_prefill_size is not None:
+        logger.debug(
+            f"Chunked prefill is ACTIVE in SGLang ServerArgs: "
+            f"chunked_prefill_size={final_chunked_prefill_size}"
+        )
+    else:
+        logger.debug(
+            "Chunked prefill is NOT active in SGLang ServerArgs "
+            "(will use default sglang behavior)"
+        )
 
     model_runner = ParallaxModelRunner(
         model_config=model_config,

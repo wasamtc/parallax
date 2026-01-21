@@ -110,6 +110,11 @@ class SGLExecutor(BaseExecutor):
         if self.lora_paths is not None:
             logger.info(f"LoRA paths provided: {[str(lora_path) for lora_path in self.lora_paths]}")
 
+        logger.debug(
+            f"SGLExecutor initializing with chunked_prefill_size={chunked_prefill_size} "
+            f"(None means sglang will use default value)"
+        )
+
         model_runner_params = {
             "model_repo": model_repo,
             "start_layer": start_layer,
@@ -147,6 +152,21 @@ class SGLExecutor(BaseExecutor):
         logger.debug(
             f"SGLang model runner initialized. num_layers={self.config.get('num_hidden_layers')}"
         )
+        # Verify chunked prefill status from model runner
+        if hasattr(self.model_runner, "server_args"):
+            runner_chunked_prefill_size = getattr(
+                self.model_runner.server_args, "chunked_prefill_size", None
+            )
+            if runner_chunked_prefill_size is not None:
+                logger.debug(
+                    f"SGLExecutor: Chunked prefill is ENABLED in model runner, "
+                    f"chunked_prefill_size={runner_chunked_prefill_size}"
+                )
+            else:
+                logger.debug(
+                    "SGLExecutor: Chunked prefill is DISABLED in model runner "
+                    "(using default sglang behavior)"
+                )
 
         # Set device to specific CUDA device based on tp_rank
         # This ensures tensors are moved to the correct GPU
