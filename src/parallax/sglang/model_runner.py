@@ -225,6 +225,7 @@ def form_sgl_server_args(
     lora_eviction_policy: Optional[str] = "lru",
     lora_backend: Optional[str] = "triton",
     max_lora_chunk_size: Optional[int] = 128,
+    chunked_prefill_size: Optional[int] = None,
 ):
     """Creates a SGL ServerArgs object"""
     sgl_server_args = ServerArgs(
@@ -247,6 +248,7 @@ def form_sgl_server_args(
         lora_backend=lora_backend,
         max_lora_chunk_size=max_lora_chunk_size,
         dp_size=dp_size,
+        chunked_prefill_size=chunked_prefill_size,
     )
     return sgl_server_args
 
@@ -270,6 +272,7 @@ def initialize_sgl_model_runner(
     lora_backend: Optional[str] = "triton",
     max_lora_chunk_size: Optional[int] = 128,
     enable_dp_attention: bool = False,
+    chunked_prefill_size: Optional[int] = None,
     **kwargs,
 ):
     """
@@ -338,6 +341,7 @@ def initialize_sgl_model_runner(
         lora_eviction_policy,
         lora_backend,
         max_lora_chunk_size,
+        chunked_prefill_size,
     )
     initialize_moe_config(server_args)
     quant_method = None

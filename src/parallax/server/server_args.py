@@ -125,6 +125,13 @@ def parse_args() -> argparse.Namespace:
     )
 
     parser.add_argument(
+        "--chunked-prefill-size",
+        type=int,
+        default=None,
+        help="Chunk size for chunked prefill processing. If None, sglang will use default value based on GPU memory.",
+    )
+
+    parser.add_argument(
         "--prefill-priority",
         type=int,
         default=0,

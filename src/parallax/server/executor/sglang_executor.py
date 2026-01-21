@@ -77,6 +77,8 @@ class SGLExecutor(BaseExecutor):
         lora_eviction_policy: Optional[str] = "lru",
         lora_backend: Optional[str] = "triton",
         max_lora_chunk_size: Optional[int] = 128,
+        # Chunked Prefill Configs
+        chunked_prefill_size: Optional[int] = None,
         # Tensor Parallel Configs
         tp_rank: Optional[int] = 0,
         tp_size: Optional[int] = 1,
@@ -134,6 +136,7 @@ class SGLExecutor(BaseExecutor):
             "lora_eviction_policy": self.lora_eviction_policy,
             "lora_backend": self.lora_backend,
             "max_lora_chunk_size": self.max_lora_chunk_size,
+            "chunked_prefill_size": chunked_prefill_size,
         }
         logger.debug(
             f"Initializing SGLang model runner for repo={model_repo}, layers=[{start_layer}, {end_layer})"
