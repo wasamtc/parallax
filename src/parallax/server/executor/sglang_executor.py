@@ -617,20 +617,35 @@ class SGLExecutor(BaseExecutor):
                     else None
                 )
             
-            # For chunked prefill in pipeline parallelism, use hidden_states length
-            # (current chunk size) for intermediate peers, not prefill_offset
+            # For chunked prefill in pipeline parallelism, use prefill_offset + hidden_states_len
+            # (total sequence length) for intermediate peers
             if not self.is_first_peer and req.hidden_states is not None:
-                # Always use hidden_states length (current chunk size) for intermediate peers
-                # prefill_offset is the total processed tokens, but we need the current chunk size
-                if hasattr(req.hidden_states, 'shape'):
+                # Check if this is a chunked prefill case
+                if (
+                    hasattr(req, 'prefill_offset')
+                    and req.prefill_offset is not None
+                    and req.input_ids is not None
+                    and req.prefill_offset < len(req.input_ids)
+                    and hasattr(req.hidden_states, 'shape')
+                ):
+                    # Chunked prefill: use prefill_offset + hidden_states_len as total length
                     if req.hidden_states.ndim == 2:
-                        # (seq_len, hidden_dim)
+                        hidden_states_len = req.hidden_states.shape[0]
+                    elif req.hidden_states.ndim == 3:
+                        hidden_states_len = req.hidden_states.shape[1] if req.hidden_states.shape[0] == 1 else req.hidden_states.shape[1]
+                    else:
+                        hidden_states_len = 0
+                    
+                    # Total length = prefill_offset (processed) + hidden_states_len (current chunk)
+                    actual_length = req.prefill_offset + hidden_states_len
+                    lengths.append(actual_length)
+                elif hasattr(req.hidden_states, 'shape'):
+                    # Non-chunked prefill case: use hidden_states length
+                    if req.hidden_states.ndim == 2:
                         actual_length = req.hidden_states.shape[0]
                     elif req.hidden_states.ndim == 3:
-                        # (1, seq_len, hidden_dim) or (batch, seq_len, hidden_dim)
                         actual_length = req.hidden_states.shape[1] if req.hidden_states.shape[0] == 1 else req.hidden_states.shape[1]
                     else:
-                        # Fallback to total_length
                         actual_length = req.total_length
                     lengths.append(actual_length)
                 else:
