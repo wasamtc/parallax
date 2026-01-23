@@ -270,6 +270,7 @@ class IntermediateRequest(Request):
         lora_path: Optional[str] = None,
         token_prob: Optional[float] = None,
         return_probs: bool = False,
+        prefill_offset: int = 0,
     ):
         super().__init__(
             request_id=request_id,
@@ -278,6 +279,7 @@ class IntermediateRequest(Request):
             input_ids=input_ids,
             sampling_params=sampling_params,
             lora_path=lora_path,
+            prefill_offset=prefill_offset,
         )
         # Hidden states from the previous peer's computation.
         # Shape:
@@ -346,6 +348,7 @@ class IntermediateRequest(Request):
             lora_path=lora_path,
             token_prob=token_prob,
             return_probs=initial_request.return_probs,
+            prefill_offset=initial_request.prefill_offset,
         )
 
     @classmethod
@@ -372,6 +375,7 @@ class IntermediateRequest(Request):
             lora_path=lora_path,
             token_prob=token_prob,
             return_probs=old_request.return_probs,
+            prefill_offset=old_request.prefill_offset,
         )
 
     def __repr__(self):

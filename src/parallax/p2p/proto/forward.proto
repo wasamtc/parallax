@@ -1,4 +1,4 @@
-﻿// python -m grpc_tools.protoc -I. --python_out=.  src/parallax/p2p/proto/forward.proto
+// python -m grpc_tools.protoc -I. --python_out=.  src/parallax/p2p/proto/forward.proto
 
 syntax = "proto3";
 package gradient;
@@ -38,6 +38,7 @@ message Req {
   string lora_path = 8;
   optional float token_prob = 9;  // Probability value for the sampled token
   bool return_probs = 10;  // Whether to return probabilities
+  int32 prefill_offset = 11;  // Current prefill offset for chunked prefill
 }
 
 message SamplingParams {

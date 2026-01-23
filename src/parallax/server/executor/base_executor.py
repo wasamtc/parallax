@@ -571,6 +571,7 @@ class BaseExecutor:
                         # 8. Dispatch to the appropriate destination
                         # Skip if next_batch is empty (all requests were filtered out, e.g., chunked prefill not complete)
                         if len(next_batch) > 0:
+                            logger.debug(f"Dispatching batch of type {batch_type} with {len(next_batch)} requests")
                             if self.is_last_peer and self.is_first_peer:
                                 # Single node: handle locally
                                 self.handle_input_requests(next_batch)
@@ -587,10 +588,8 @@ class BaseExecutor:
                                     f"in {(time.time() - start_time) * 1000:.3f} ms"
                                 )
                         else:
-                            logger.debug(
-                                f"All requests filtered out in batch of type {batch_type} "
-                                f"(chunked prefill not complete), skipping dispatch"
-                            )
+                            logger.info(f"All requests filtered out in batch of type {batch_type} "
+                            f"(chunked prefill not complete), skipping dispatch")
 
             except Exception as e:
                 logger.exception(f"Error processing batch: {e}")
@@ -769,6 +768,7 @@ class BaseExecutor:
                 routing_table=request.routing_table,
                 lora_path=request.lora_path,
                 token_prob=token_prob,
+                prefill_offset=request.prefill_offset,
             )
         if self.is_last_peer:
             # Last peer decodes a token and sends it back to the first peer.
@@ -788,6 +788,7 @@ class BaseExecutor:
                 routing_table=request.routing_table,
                 lora_path=request.lora_path,
                 token_prob=token_prob,
+                prefill_offset=request.prefill_offset,
             )
         # This peer is the first or an intermediate peer.
         if self.is_first_peer:

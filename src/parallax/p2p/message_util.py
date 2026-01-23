@@ -1,4 +1,4 @@
-﻿"""
+"""
 Utility functions for message serialization and deserialization.
 
 This module contains utility functions for serializing and deserializing messages
@@ -58,6 +58,10 @@ def request_to_proto(
         if hasattr(request, "return_probs"):
             proto_req.return_probs = request.return_probs
 
+        # Add prefill_offset
+        if hasattr(request, "prefill_offset"):
+            proto_req.prefill_offset = request.prefill_offset
+
         forward_request.reqs.append(proto_req)
 
     return forward_request
@@ -102,6 +106,9 @@ def proto_to_request(
         # Extract return_probs (defaults to False if not present)
         return_probs = proto_req.return_probs if hasattr(proto_req, "return_probs") else False
 
+        # Extract prefill_offset (defaults to 0 if not present)
+        prefill_offset = proto_req.prefill_offset if hasattr(proto_req, "prefill_offset") else 0
+
         request = IntermediateRequest(
             request_id=proto_req.rid,
             current_position=current_position,
@@ -114,6 +121,7 @@ def proto_to_request(
             lora_path=proto_req.lora_path if proto_req.lora_path != "" else None,
             token_prob=token_prob,
             return_probs=return_probs,
+            prefill_offset=prefill_offset,
         )
 
         requests.append(request)
