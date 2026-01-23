@@ -307,22 +307,6 @@ class MLXExecutor(BaseExecutor):
 
                     if not req.abort and req.next_token_id is not None:
                         original_req.commit_new_token(req.next_token_id)
-                        logger.debug(
-                            f"[FirstPeer-MLX] Committed token {req.next_token_id} for {req.request_id}, "
-                            f"output_ids now has {len(original_req.output_ids)} tokens"
-                        )
-                    elif req.next_token_id is None:
-                        # Chunked prefill not complete (signaled by GPU peer)
-                        # Re-enqueue to continue processing next chunk
-                        if original_req.is_prefill and hasattr(original_req, 'input_ids') and original_req.input_ids is not None:
-                            if hasattr(original_req, 'prefill_offset') and original_req.prefill_offset is not None:
-                                if original_req.prefill_offset < len(original_req.input_ids):
-                                    logger.debug(
-                                        f"[FirstPeer-MLX] Re-enqueuing request {req.request_id} for next chunk "
-                                        f"(offset={original_req.prefill_offset}, total={len(original_req.input_ids)})"
-                                    )
-                                    self.scheduler.enque_request(original_req)
-                                    continue
 
                     if len(req.routing_table) > 0:
                         original_req.routing_table = req.routing_table

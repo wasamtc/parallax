@@ -418,44 +418,6 @@ class BaseExecutor:
         for i, src_request in enumerate(requests):
             if self.is_last_peer:
                 # Last peer gets a 1D array of token IDs
-                # Check if this request was filtered out (token_id == -1)
-                try:
-                    # Try to extract token_id from various tensor types
-                    token_elem = hidden_states[i]
-                    if hasattr(token_elem, 'item'):
-                        # PyTorch tensor
-                        token_id = int(token_elem.item())
-                    elif hasattr(token_elem, '__int__'):
-                        # Other numeric types
-                        token_id = int(token_elem)
-                    else:
-                        token_id = token_elem
-                except (IndexError, TypeError, AttributeError):
-                    # Fallback: try direct access
-                    token_id = hidden_states[i] if hasattr(hidden_states, '__getitem__') else None
-                
-                if token_id == -1:
-                    # Request was filtered out (chunked prefill not complete)
-                    # Create IntermediateRequest with next_token_id=None to signal MAC peer to re-enqueue
-                    if src_request.is_prefill and hasattr(src_request, 'input_ids') and src_request.input_ids is not None:
-                        if hasattr(src_request, 'prefill_offset') and src_request.prefill_offset is not None:
-                            if src_request.prefill_offset < len(src_request.input_ids):
-                                # Prefill not complete, send back to MAC peer with next_token_id=None
-                                # MAC peer will re-enqueue in its own scheduler
-                                next_req = IntermediateRequest(
-                                    request_id=src_request.request_id,
-                                    status=RequestStatus.PREFILLING,  # Keep PREFILLING status
-                                    current_position=src_request.total_length,
-                                    input_ids=src_request.input_ids,
-                                    hidden_states=None,  # No hidden states needed
-                                    next_token_id=None,  # Signal that prefill is not complete
-                                    routing_table=src_request.routing_table,
-                                    lora_path=src_request.lora_path,
-                                    token_prob=None,
-                                )
-                                batched_requests.append(next_req)
-                                continue
-                
                 hidden_state_for_req = hidden_states[i : i + 1]
             else:
                 # Other peers get a 3D array of hidden states
