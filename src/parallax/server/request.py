@@ -230,20 +230,7 @@ class InitialRequest(Request):
 
         # Finishing condition checks are now handled by the Scheduler.
         if self.status == RequestStatus.PREFILLING:
-            # For chunked prefill, only switch to DECODING when prefill is complete
-            # (i.e., prefill_offset >= len(input_ids))
-            if (
-                hasattr(self, 'prefill_offset')
-                and self.prefill_offset is not None
-                and self.input_ids is not None
-                and self.prefill_offset < len(self.input_ids)
-            ):
-                # Chunked prefill: prefill not complete yet, keep PREFILLING status
-                # The request will continue processing remaining chunks
-                pass
-            else:
-                # Non-chunked prefill or prefill complete: switch to DECODING
-                self.status = RequestStatus.DECODING
+            self.status = RequestStatus.DECODING
 
     @classmethod
     def from_prompt_ids(

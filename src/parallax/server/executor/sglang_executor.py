@@ -465,8 +465,42 @@ class SGLExecutor(BaseExecutor):
                 ]
                 token_probs = real_probs.cpu().float().tolist()
 
-            # Return dict with token_ids and optional probs
-            return {"hidden_states": next_token_ids, "probs": token_probs}
+            # Filter out requests that haven't completed prefill (chunked prefill case)
+            # We need to return token_ids with the same length as requests, using -1 as placeholder
+            # for filtered requests
+            filtered_token_ids = []
+            filtered_token_probs = []
+            
+            # Convert next_token_ids to list if it's a tensor for easier indexing
+            if isinstance(next_token_ids, torch.Tensor):
+                next_token_ids_list = next_token_ids.cpu().tolist()
+            else:
+                next_token_ids_list = next_token_ids
+            
+            for i, req in enumerate(requests):
+                # Check if prefill is complete
+                if req.is_prefill and hasattr(req, 'input_ids') and req.input_ids is not None:
+                    if hasattr(req, 'prefill_offset') and req.prefill_offset is not None:
+                        if req.prefill_offset < len(req.input_ids):
+                            # Prefill not complete yet, use -1 as placeholder
+                            logger.debug(
+                                f"Request {req.request_id}: Prefill not complete "
+                                f"(offset={req.prefill_offset}, total={len(req.input_ids)}), skipping token"
+                            )
+                            continue
+                
+                # Prefill complete or decode request, include in output
+                filtered_token_ids.append(int(next_token_ids_list[i]))
+                if token_probs and i < len(token_probs):
+                    filtered_token_probs.append(token_probs[i])
+                else:
+                    filtered_token_probs.append(None)
+
+            # Return dict with token_ids (same length as requests, -1 for filtered ones)
+            return {
+                "hidden_states": torch.tensor(filtered_token_ids, dtype=torch.int64),
+                "probs": filtered_token_probs if filtered_token_probs else None,
+            }
         else:
             # Intermediate peer: return hidden states for next peer
             # Note: SGLang stores hidden_states + residual separately
