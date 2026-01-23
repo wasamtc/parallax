@@ -766,9 +766,25 @@ class BaseExecutor:
             ), "Last peer must receive an IntermediateRequest."
 
             next_token_id, hidden_states = self._gen_token_id_from_hidden(hidden_states)
+            
+            # For chunked prefill, check if prefill is complete
+            # Only switch to DECODING when prefill_offset >= len(input_ids)
+            if (
+                request.is_prefill
+                and hasattr(request, 'prefill_offset')
+                and request.prefill_offset is not None
+                and request.input_ids is not None
+                and request.prefill_offset < len(request.input_ids)
+            ):
+                # Chunked prefill: prefill not complete yet, keep PREFILLING status
+                status = RequestStatus.PREFILLING
+            else:
+                # Non-chunked prefill or prefill complete: switch to DECODING
+                status = RequestStatus.DECODING
+            
             return IntermediateRequest(
                 request_id=request.request_id,
-                status=RequestStatus.DECODING,  # Last peer always changes status to DECODING
+                status=status,
                 current_position=request.total_length,
                 input_ids=request.input_ids,
                 hidden_states=hidden_states,
