@@ -406,11 +406,16 @@ class BaseExecutor:
         # Check if hidden_states is empty (all requests were filtered out)
         if hasattr(hidden_states, '__len__') and len(hidden_states) == 0:
             # Re-enqueue prefill requests that are not yet complete (chunked prefill case)
-            for req in requests:
-                if req.is_prefill and hasattr(req, 'input_ids') and req.input_ids is not None:
-                    if req.prefill_offset < len(req.input_ids):
-                        # Prefill not complete, re-enqueue to continue processing next chunk
-                        self.scheduler.enque_request(req)
+            # Only re-enqueue for first peer, which is responsible for processing chunked prefill
+            # Last peer and intermediate peers should wait for the next chunk from previous peer
+            if self.is_first_peer:
+                for req in requests:
+                    if req.is_prefill and hasattr(req, 'input_ids') and req.input_ids is not None:
+                        if req.prefill_offset < len(req.input_ids):
+                            # Prefill not complete, re-enqueue to continue processing next chunk
+                            self.scheduler.enque_request(req)
+            # For last peer and intermediate peers, requests remain in running state
+            # and will receive the next chunk from the previous peer
             return []
 
         batched_requests = []
