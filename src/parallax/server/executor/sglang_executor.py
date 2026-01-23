@@ -645,8 +645,29 @@ class SGLExecutor(BaseExecutor):
                 else:
                     lengths.append(req.total_length)
             else:
-                # First peer: use total_length (processes full input_ids)
-                lengths.append(req.total_length)
+                # First peer: calculate actual length based on chunked prefill or total_length
+                if (
+                    self.chunked_prefill_size is not None
+                    and req.input_ids is not None
+                    and hasattr(req, 'prefill_offset')
+                    and req.prefill_offset is not None
+                    and req.prefill_offset < len(req.input_ids)
+                ):
+                    # Chunked prefill: calculate actual tokens to process in this chunk
+                    # Calculate chunk_len, round up to page_size multiple (similar to mlx_executor)
+                    chunk_len = self.chunked_prefill_size
+                    # Get page_size from model_runner
+                    page_size = getattr(self.model_runner, 'page_size', 64)  # Default to 64 if not available
+                    chunk_len = ((chunk_len + page_size - 1) // page_size) * page_size
+                    
+                    # Calculate actual tokens to process: from prefill_offset to min(end, prefill_offset + chunk_len)
+                    end = len(req.input_ids)
+                    start_pos = req.prefill_offset
+                    actual_new_tokens = min(chunk_len, end - start_pos)
+                    lengths.append(actual_new_tokens)
+                else:
+                    # Non-chunked prefill: use total_length
+                    lengths.append(req.total_length)
         lengths_tensor = torch.tensor(lengths, device=self.device)
 
         schedule_batch, forward_batch = form_sgl_batch_prefill(
