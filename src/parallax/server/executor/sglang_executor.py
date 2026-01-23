@@ -465,8 +465,38 @@ class SGLExecutor(BaseExecutor):
                 ]
                 token_probs = real_probs.cpu().float().tolist()
 
-            # Return dict with token_ids and optional probs
-            return {"hidden_states": next_token_ids, "probs": token_probs}
+            # Filter out requests that haven't completed prefill (chunked prefill case)
+            filtered_token_ids = []
+            filtered_token_probs = []
+            
+            for i, req in enumerate(requests):
+                # Check if prefill is complete
+                if req.is_prefill and hasattr(req, 'input_ids') and req.input_ids is not None:
+                    if req.prefill_offset < len(req.input_ids):
+                        # Prefill not complete yet, skip this token
+                        logger.debug(
+                            f"Request {req.request_id}: Prefill not complete "
+                            f"(offset={req.prefill_offset}, total={len(req.input_ids)}), skipping token"
+                        )
+                        continue
+                
+                # Prefill complete or decode request, include in output
+                filtered_token_ids.append(int(next_token_ids[i]))
+                if token_probs and i < len(token_probs):
+                    filtered_token_probs.append(token_probs[i])
+
+            # Return dict with filtered token_ids and optional probs
+            if filtered_token_ids:
+                return {
+                    "hidden_states": torch.tensor(filtered_token_ids, dtype=torch.int64, device=next_token_ids.device),
+                    "probs": filtered_token_probs if filtered_token_probs else None,
+                }
+            else:
+                # All requests filtered out (all still in prefill)
+                return {
+                    "hidden_states": torch.tensor([], dtype=torch.int64, device=next_token_ids.device),
+                    "probs": None,
+                }
         else:
             # Intermediate peer: return hidden states for next peer
             # Note: SGLang stores hidden_states + residual separately

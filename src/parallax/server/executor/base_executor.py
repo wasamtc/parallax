@@ -564,20 +564,27 @@ class BaseExecutor:
                         )
 
                         # 8. Dispatch to the appropriate destination
-                        if self.is_last_peer and self.is_first_peer:
-                            # Single node: handle locally
-                            self.handle_input_requests(next_batch)
-                        elif self.tp_rank == 0:
-                            # Send output to next peer
-                            self.send_to_peer_socket.send_multipart(
-                                [
-                                    b"forward",
-                                    request_to_proto(next_batch, self.device).SerializeToString(),
-                                ]
-                            )
+                        # Skip if next_batch is empty (all requests were filtered out, e.g., chunked prefill not complete)
+                        if len(next_batch) > 0:
+                            if self.is_last_peer and self.is_first_peer:
+                                # Single node: handle locally
+                                self.handle_input_requests(next_batch)
+                            elif self.tp_rank == 0:
+                                # Send output to next peer
+                                self.send_to_peer_socket.send_multipart(
+                                    [
+                                        b"forward",
+                                        request_to_proto(next_batch, self.device).SerializeToString(),
+                                    ]
+                                )
+                                logger.debug(
+                                    f"Processed batch of type {batch_type} with {len(next_batch)} requests "
+                                    f"in {(time.time() - start_time) * 1000:.3f} ms"
+                                )
+                        else:
                             logger.debug(
-                                f"Processed batch of type {batch_type} with {len(next_batch)} requests "
-                                f"in {(time.time() - start_time) * 1000:.3f} ms"
+                                f"All requests filtered out in batch of type {batch_type} "
+                                f"(chunked prefill not complete), skipping dispatch"
                             )
 
             except Exception as e:
@@ -747,19 +754,9 @@ class BaseExecutor:
             ), "Invalid request type for decoding."
 
             next_token_id, hidden_states = self._gen_token_id_from_hidden(hidden_states)
-            
-            # For chunked prefill, check if prefill is complete before changing status to DECODING
-            # Prefill is complete when prefill_offset >= len(input_ids)
-            if request.is_prefill and request.input_ids is not None:
-                prefill_complete = request.prefill_offset >= len(request.input_ids)
-                new_status = request.status if not prefill_complete else RequestStatus.DECODING
-            else:
-                # If not prefill or input_ids is None, use original logic
-                new_status = RequestStatus.DECODING
-            
             return IntermediateRequest(
                 request_id=request.request_id,
-                status=new_status,
+                status=RequestStatus.DECODING,
                 current_position=request.total_length + 1,
                 input_ids=request.input_ids,
                 hidden_states=hidden_states,
@@ -767,7 +764,6 @@ class BaseExecutor:
                 routing_table=request.routing_table,
                 lora_path=request.lora_path,
                 token_prob=token_prob,
-                prefill_offset=request.prefill_offset,
             )
         if self.is_last_peer:
             # Last peer decodes a token and sends it back to the first peer.
@@ -777,19 +773,9 @@ class BaseExecutor:
             ), "Last peer must receive an IntermediateRequest."
 
             next_token_id, hidden_states = self._gen_token_id_from_hidden(hidden_states)
-            
-            # For chunked prefill, check if prefill is complete before changing status to DECODING
-            # Prefill is complete when prefill_offset >= len(input_ids)
-            if request.is_prefill and request.input_ids is not None:
-                prefill_complete = request.prefill_offset >= len(request.input_ids)
-                new_status = request.status if not prefill_complete else RequestStatus.DECODING
-            else:
-                # If not prefill or input_ids is None, use original logic
-                new_status = RequestStatus.DECODING
-            
             return IntermediateRequest(
                 request_id=request.request_id,
-                status=new_status,
+                status=RequestStatus.DECODING,  # Last peer always changes status to DECODING
                 current_position=request.total_length,
                 input_ids=request.input_ids,
                 hidden_states=hidden_states,
@@ -797,7 +783,6 @@ class BaseExecutor:
                 routing_table=request.routing_table,
                 lora_path=request.lora_path,
                 token_prob=token_prob,
-                prefill_offset=request.prefill_offset,
             )
         # This peer is the first or an intermediate peer.
         if self.is_first_peer:
