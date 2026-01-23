@@ -54,6 +54,7 @@ def create_executor_config(args: argparse.Namespace, shared_state=None, conn=Non
         "max_lora_chunk_size": args.max_lora_chunk_size,
         "chunked_prefill_size": getattr(args, "chunked_prefill_size", None),
         "enable_weight_refit": args.enable_weight_refit,
+        "weight_refit_mode": args.weight_refit_mode,
     }
     return config
 
