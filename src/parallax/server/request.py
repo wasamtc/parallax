@@ -229,8 +229,15 @@ class InitialRequest(Request):
         self.output_ids.append(token_id)
 
         # Finishing condition checks are now handled by the Scheduler.
+        # For chunked prefill, only change status to DECODING if prefill is complete
         if self.status == RequestStatus.PREFILLING:
-            self.status = RequestStatus.DECODING
+            if self.input_ids is not None and hasattr(self, 'prefill_offset'):
+                # Prefill is complete when prefill_offset >= len(input_ids)
+                if self.prefill_offset >= len(self.input_ids):
+                    self.status = RequestStatus.DECODING
+            else:
+                # No chunked prefill, use original logic
+                self.status = RequestStatus.DECODING
 
     @classmethod
     def from_prompt_ids(
@@ -270,6 +277,7 @@ class IntermediateRequest(Request):
         lora_path: Optional[str] = None,
         token_prob: Optional[float] = None,
         return_probs: bool = False,
+        prefill_offset: int = 0,
     ):
         super().__init__(
             request_id=request_id,
@@ -278,6 +286,7 @@ class IntermediateRequest(Request):
             input_ids=input_ids,
             sampling_params=sampling_params,
             lora_path=lora_path,
+            prefill_offset=prefill_offset,
         )
         # Hidden states from the previous peer's computation.
         # Shape:
@@ -346,6 +355,7 @@ class IntermediateRequest(Request):
             lora_path=lora_path,
             token_prob=token_prob,
             return_probs=initial_request.return_probs,
+            prefill_offset=initial_request.prefill_offset,
         )
 
     @classmethod
@@ -372,6 +382,7 @@ class IntermediateRequest(Request):
             lora_path=lora_path,
             token_prob=token_prob,
             return_probs=old_request.return_probs,
+            prefill_offset=old_request.prefill_offset,
         )
 
     def __repr__(self):

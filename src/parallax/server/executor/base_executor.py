@@ -747,9 +747,19 @@ class BaseExecutor:
             ), "Invalid request type for decoding."
 
             next_token_id, hidden_states = self._gen_token_id_from_hidden(hidden_states)
+            
+            # For chunked prefill, check if prefill is complete before changing status to DECODING
+            # Prefill is complete when prefill_offset >= len(input_ids)
+            if request.is_prefill and request.input_ids is not None:
+                prefill_complete = request.prefill_offset >= len(request.input_ids)
+                new_status = request.status if not prefill_complete else RequestStatus.DECODING
+            else:
+                # If not prefill or input_ids is None, use original logic
+                new_status = RequestStatus.DECODING
+            
             return IntermediateRequest(
                 request_id=request.request_id,
-                status=RequestStatus.DECODING,
+                status=new_status,
                 current_position=request.total_length + 1,
                 input_ids=request.input_ids,
                 hidden_states=hidden_states,
@@ -757,6 +767,7 @@ class BaseExecutor:
                 routing_table=request.routing_table,
                 lora_path=request.lora_path,
                 token_prob=token_prob,
+                prefill_offset=request.prefill_offset,
             )
         if self.is_last_peer:
             # Last peer decodes a token and sends it back to the first peer.
@@ -766,9 +777,19 @@ class BaseExecutor:
             ), "Last peer must receive an IntermediateRequest."
 
             next_token_id, hidden_states = self._gen_token_id_from_hidden(hidden_states)
+            
+            # For chunked prefill, check if prefill is complete before changing status to DECODING
+            # Prefill is complete when prefill_offset >= len(input_ids)
+            if request.is_prefill and request.input_ids is not None:
+                prefill_complete = request.prefill_offset >= len(request.input_ids)
+                new_status = request.status if not prefill_complete else RequestStatus.DECODING
+            else:
+                # If not prefill or input_ids is None, use original logic
+                new_status = RequestStatus.DECODING
+            
             return IntermediateRequest(
                 request_id=request.request_id,
-                status=RequestStatus.DECODING,  # Last peer always changes status to DECODING
+                status=new_status,
                 current_position=request.total_length,
                 input_ids=request.input_ids,
                 hidden_states=hidden_states,
@@ -776,6 +797,7 @@ class BaseExecutor:
                 routing_table=request.routing_table,
                 lora_path=request.lora_path,
                 token_prob=token_prob,
+                prefill_offset=request.prefill_offset,
             )
         # This peer is the first or an intermediate peer.
         if self.is_first_peer:
