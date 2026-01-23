@@ -359,11 +359,7 @@ class MLXExecutor(BaseExecutor):
                     req, IntermediateRequest
                 ), "Non-first peers must receive IntermediateRequests."
                 if req.is_finished or req.hidden_states is None:
-                    if self.enable_prefix_cache:
-                        keys, values = self.cache_manager.gather_kv_cache(req.request_id)
-                        self.prefix_cache.cache_finished_request(req, keys, values)
-                        self.prefix_cache.evict_request(req.request_id)
-
+                    # cache_manager.release_request already handles prefix cache release
                     self.cache_manager.release_request(req.request_id)
                     logger.debug(
                         f"Released resources for finished request {req.request_id}, "

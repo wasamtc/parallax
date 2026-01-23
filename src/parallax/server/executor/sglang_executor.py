@@ -616,7 +616,27 @@ class SGLExecutor(BaseExecutor):
                     if self.lora_paths and len(self.lora_paths) > 0
                     else None
                 )
-            lengths.append(req.total_length)
+            
+            # For chunked prefill in pipeline parallelism, use actual hidden_states length
+            # instead of total_length for intermediate peers
+            if not self.is_first_peer and req.hidden_states is not None:
+                # Intermediate peer: use actual hidden_states length (chunk size)
+                if hasattr(req.hidden_states, 'shape'):
+                    if req.hidden_states.ndim == 2:
+                        # (seq_len, hidden_dim)
+                        actual_length = req.hidden_states.shape[0]
+                    elif req.hidden_states.ndim == 3:
+                        # (1, seq_len, hidden_dim) or (batch, seq_len, hidden_dim)
+                        actual_length = req.hidden_states.shape[1] if req.hidden_states.shape[0] == 1 else req.hidden_states.shape[1]
+                    else:
+                        # Fallback to total_length
+                        actual_length = req.total_length
+                    lengths.append(actual_length)
+                else:
+                    lengths.append(req.total_length)
+            else:
+                # First peer: use total_length (processes full input_ids)
+                lengths.append(req.total_length)
         lengths_tensor = torch.tensor(lengths, device=self.device)
 
         schedule_batch, forward_batch = form_sgl_batch_prefill(
