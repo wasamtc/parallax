@@ -436,12 +436,24 @@ class BaseExecutor:
                 
                 if token_id == -1:
                     # Request was filtered out (chunked prefill not complete)
-                    # Re-enqueue to continue processing next chunk
+                    # Create IntermediateRequest with next_token_id=None to signal MAC peer to re-enqueue
                     if src_request.is_prefill and hasattr(src_request, 'input_ids') and src_request.input_ids is not None:
                         if hasattr(src_request, 'prefill_offset') and src_request.prefill_offset is not None:
                             if src_request.prefill_offset < len(src_request.input_ids):
-                                # Prefill not complete, re-enqueue to continue processing next chunk
-                                self.scheduler.enque_request(src_request)
+                                # Prefill not complete, send back to MAC peer with next_token_id=None
+                                # MAC peer will re-enqueue in its own scheduler
+                                next_req = IntermediateRequest(
+                                    request_id=src_request.request_id,
+                                    status=RequestStatus.PREFILLING,  # Keep PREFILLING status
+                                    current_position=src_request.total_length,
+                                    input_ids=src_request.input_ids,
+                                    hidden_states=None,  # No hidden states needed
+                                    next_token_id=None,  # Signal that prefill is not complete
+                                    routing_table=src_request.routing_table,
+                                    lora_path=src_request.lora_path,
+                                    token_prob=None,
+                                )
+                                batched_requests.append(next_req)
                                 continue
                 
                 hidden_state_for_req = hidden_states[i : i + 1]

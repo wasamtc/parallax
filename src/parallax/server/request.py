@@ -285,7 +285,8 @@ class IntermediateRequest(Request):
         #   decode: (1, hidden_dim)
         # For data sent from Last Peer to First Peer, this can also be a single token_id
         # wrapped in a numpy array, e.g., np.array([token_id]).
-        if not self.is_finished and hidden_states is None:
+        # Exception: hidden_states can be None if next_token_id is None (chunked prefill signal)
+        if not self.is_finished and hidden_states is None and next_token_id is not None:
             raise ValueError(f"hidden_states cannot be None for unfinished request {request_id}.")
 
         self.current_position = current_position
