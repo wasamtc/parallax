@@ -55,16 +55,19 @@ def transform_requests_to_sglang(
     for old_req in old_requests:
         sampling_params = transform_sampling_params_to_sglang(old_req.sampling_params)
         
-        # For chunked prefill in pipeline parallelism, use prefill_offset
-        # to determine how many input_ids to use for intermediate peers
+        # For chunked prefill in pipeline parallelism:
+        # - First peer: always use full input_ids (needed for cache lookup)
+        # - Intermediate peer: use prefill_offset to determine how many input_ids to use
         input_ids_to_use = old_req.input_ids
         if (
             old_req.input_ids is not None
+            and hasattr(old_req, 'hidden_states')
+            and old_req.hidden_states is not None
             and hasattr(old_req, 'prefill_offset')
             and old_req.prefill_offset is not None
             and old_req.prefill_offset < len(old_req.input_ids)
         ):
-            # Chunked prefill: use prefill_offset to determine how many tokens to use
+            # Intermediate peer with chunked prefill: use prefill_offset to determine how many tokens to use
             input_ids_to_use = old_req.input_ids[:old_req.prefill_offset]
         
         req = Req(
