@@ -59,6 +59,8 @@ class MLXExecutor(BaseExecutor):
         kv_block_size: int = 32,
         kv_cache_memory_fraction: float = 0.8,
         enable_prefix_cache: Optional[bool] = False,
+        # Chunked Prefill Configs
+        chunked_prefill_size: Optional[int] = 4096,
         # Communication Configs
         # P2P Communication Configs
         send_to_peer_addr: Optional[str] = None,
@@ -238,8 +240,10 @@ class MLXExecutor(BaseExecutor):
         #     dtype=self.dtype,
         #     page_size=1,
         # )
+        # Chunked Prefill
+        self.chunked_prefill_size = chunked_prefill_size
         logger.debug(
-            f"mlx_executor initialized; wired_limit set; prefix_cache={'on' if self.enable_prefix_cache else 'off'}, total memory usage: {mx.get_active_memory() / 1024**3 :.3f} GB"
+            f"mlx_executor initialized; wired_limit set; prefix_cache={'on' if self.enable_prefix_cache else 'off'}, chunked_prefill_size={chunked_prefill_size}, total memory usage: {mx.get_active_memory() / 1024**3 :.3f} GB"
         )
 
     def _tensor_parallel_broadcast_pyobj(self, broadcast_obj):
@@ -447,8 +451,10 @@ class MLXExecutor(BaseExecutor):
         if self.enable_prefix_cache:
             for req in requests:
                 if req.is_prefill:
-                    # Insert all full blocks from this prefill into the prefix cache
-                    self.cache_manager.insert_full_blocks_to_cache(req.request_id)
+                    # For chunked prefill, use prefill_offset (actual processed tokens)
+                    # Otherwise, processed_length=None will use context_lengths (backward compatible)
+                    processed_length = req.prefill_offset if hasattr(req, 'prefill_offset')  else None
+                    self.cache_manager.insert_full_blocks_to_cache(req.request_id, processed_length=processed_length)
 
         # Process last peer: need additional sampling + detokenization
         if return_decoded_tokens:
@@ -490,8 +496,40 @@ class MLXExecutor(BaseExecutor):
                     logger.debug(f"Failed to extract token probs: {e}")
                     token_probs = None
 
-            # Return dict with token_ids and optional probs
-            return {"hidden_states": token_ids, "probs": token_probs}
+            # Filter out requests that haven't completed prefill (chunked prefill case)
+            filtered_token_ids = []
+            filtered_token_probs = []
+            filtered_requests = []
+            
+            for i, req in enumerate(requests):
+                # Check if prefill is complete
+                if req.is_prefill and hasattr(req, 'input_ids') and req.input_ids is not None:
+                    if req.prefill_offset < len(req.input_ids):
+                        # Prefill not complete yet, skip this token
+                        logger.debug(
+                            f"Request {req.request_id}: Prefill not complete "
+                            f"(offset={req.prefill_offset}, total={len(req.input_ids)}), skipping token"
+                        )
+                        continue
+                
+                # Prefill complete or decode request, include in output
+                filtered_token_ids.append(int(token_ids[i]))
+                if token_probs and i < len(token_probs):
+                    filtered_token_probs.append(token_probs[i])
+                filtered_requests.append(req)
+
+            # Return dict with filtered token_ids and optional probs
+            if filtered_token_ids:
+                return {
+                    "hidden_states": mx.array(filtered_token_ids, dtype=mx.uint32),
+                    "probs": filtered_token_probs if filtered_token_probs else None,
+                }
+            else:
+                # All requests filtered out (all still in prefill)
+                return {
+                    "hidden_states": mx.array([], dtype=mx.uint32),
+                    "probs": None,
+                }
         # Intermediate peer: return hidden states without probs
         return {"hidden_states": hidden_states, "probs": None}
 
@@ -539,47 +577,131 @@ class MLXExecutor(BaseExecutor):
             )
             if not success:
                 raise RuntimeError(f"OOM during prefill allocation for {req.request_id}")
+            # For chunked prefill, re-match prefix cache if prefill_offset > 0
+            # (previous chunks may have been inserted into cache)
+            if (
+                self.chunked_prefill_size is not None
+                and req.input_ids is not None
+                and hasattr(req, "prefill_offset")
+                and req.prefill_offset > 0
+                and self.enable_prefix_cache
+            ):
+                # Re-match prefix cache to find newly cached tokens from previous chunks
+                new_matched_tokens = self.cache_manager.match_and_reuse_prefix(
+                    req.request_id, req.input_ids
+                )
+                if new_matched_tokens > matched_tokens:
+                    matched_tokens = new_matched_tokens
+                    logger.debug(
+                        f"Request {req.request_id}: Re-matched prefix cache, "
+                        f"matched_tokens updated to {matched_tokens} (prefill_offset={req.prefill_offset})"
+                    )
 
             prefix_lens_list.append(matched_tokens)
 
-            if self.is_first_peer:
-                if matched_tokens > 0 and self.enable_prefix_cache:
-                    # Skip the prefix tokens that are already cached
-                    # But we must keep at least the last token to generate next token logits
-                    new_tokens = req.input_ids[matched_tokens:]
+            # Chunked prefill logic
+            if self.chunked_prefill_size is not None and req.input_ids is not None:
+                # Calculate chunk_len, round up to block_size multiple
+                chunk_len = self.chunked_prefill_size
+                chunk_len = (
+                    (chunk_len + self.cache_manager.block_size - 1)
+                    // self.cache_manager.block_size
+                ) * self.cache_manager.block_size
+
+                end = len(req.input_ids)
+
+                if self.is_first_peer:
+                    if matched_tokens > 0 and self.enable_prefix_cache:
+                        # Cache hit: start from matched_tokens
+                        start_pos = matched_tokens
+                        new_tokens = req.input_ids[start_pos : min(end, start_pos + chunk_len)]
+                        req.prefill_offset = start_pos + min(chunk_len, end - start_pos)
+                    else:
+                        # Cache miss: start from prefill_offset
+                        start_pos = req.prefill_offset
+                        new_tokens = req.input_ids[start_pos : min(end, start_pos + chunk_len)]
+                        req.prefill_offset = start_pos + min(chunk_len, end - start_pos)
+
                     if len(new_tokens) == 0:
-                        # All tokens cached - keep the last token and adjust prefix_len
+                        # All tokens processed - keep the last token for logits
                         new_tokens = req.input_ids[-1:]
-                        prefix_lens_list[-1] = matched_tokens - 1
+                        prefix_lens_list[-1] = matched_tokens - 1 if matched_tokens > 0 else end - 1
                         actual_processed_lengths_list.append(1)
                         logger.debug(
-                            f"Request {req.request_id}: Full cache hit, keeping last token for logits"
+                            f"Request {req.request_id}: All tokens processed, keeping last token for logits"
                         )
                     else:
                         actual_processed_lengths_list.append(len(new_tokens))
                         logger.debug(
-                            f"Request {req.request_id}: Skipping {matched_tokens} cached tokens, "
-                            f"processing {len(new_tokens)} new tokens"
+                            f"Request {req.request_id}: Processing chunk from {start_pos} to {req.prefill_offset}, "
+                            f"{len(new_tokens)} tokens"
                         )
                     h_or_tokens_list.append(new_tokens)
                 else:
-                    h_or_tokens_list.append(req.input_ids)
-                    actual_processed_lengths_list.append(len(req.input_ids))
-            else:
-                if matched_tokens > 0 and self.enable_prefix_cache:
-                    # Skip the prefix hidden states that correspond to cached tokens
-                    new_hidden = req.hidden_states[matched_tokens:]
+                    # For intermediate peers, use prefill_offset to slice hidden_states
+                    if matched_tokens > 0 and self.enable_prefix_cache:
+                        # Cache hit: start from matched_tokens
+                        start_pos = matched_tokens
+                        end_pos = min(end, start_pos + chunk_len)
+                        req.prefill_offset = end_pos
+                    else:
+                        # Cache miss: start from prefill_offset
+                        start_pos = req.prefill_offset
+                        end_pos = min(end, start_pos + chunk_len)
+                        req.prefill_offset = end_pos
+
+                    new_hidden = req.hidden_states[start_pos:end_pos]
                     if new_hidden.shape[0] == 0:
-                        # All tokens cached - keep the last hidden state
+                        # All tokens processed - keep the last hidden state
                         new_hidden = req.hidden_states[-1:]
-                        prefix_lens_list[-1] = matched_tokens - 1
+                        prefix_lens_list[-1] = matched_tokens - 1 if matched_tokens > 0 else end - 1
                         actual_processed_lengths_list.append(1)
                     else:
                         actual_processed_lengths_list.append(new_hidden.shape[0])
                     h_or_tokens_list.append(new_hidden)
+            else:
+                # Original logic (no chunked prefill)
+                if self.is_first_peer:
+                    if matched_tokens > 0 and self.enable_prefix_cache:
+                        # Skip the prefix tokens that are already cached
+                        # But we must keep at least the last token to generate next token logits
+                        new_tokens = req.input_ids[matched_tokens:]
+                        if len(new_tokens) == 0:
+                            # All tokens cached - keep the last token and adjust prefix_len
+                            new_tokens = req.input_ids[-1:]
+                            prefix_lens_list[-1] = matched_tokens - 1
+                            actual_processed_lengths_list.append(1)
+                            logger.debug(
+                                f"Request {req.request_id}: Full cache hit, keeping last token for logits"
+                            )
+                        else:
+                            actual_processed_lengths_list.append(len(new_tokens))
+                            logger.debug(
+                                f"Request {req.request_id}: Skipping {matched_tokens} cached tokens, "
+                                f"processing {len(new_tokens)} new tokens"
+                            )
+                        h_or_tokens_list.append(new_tokens)
+                    else:
+                        h_or_tokens_list.append(req.input_ids)
+                        actual_processed_lengths_list.append(len(req.input_ids))
+                        req.prefill_offset = len(req.input_ids)
                 else:
-                    h_or_tokens_list.append(req.hidden_states)
-                    actual_processed_lengths_list.append(req.hidden_states.shape[0])
+                    if matched_tokens > 0 and self.enable_prefix_cache:
+                        # Skip the prefix hidden states that correspond to cached tokens
+                        new_hidden = req.hidden_states[matched_tokens:]
+                        if new_hidden.shape[0] == 0:
+                            # All tokens cached - keep the last hidden state
+                            new_hidden = req.hidden_states[-1:]
+                            prefix_lens_list[-1] = matched_tokens - 1
+                            actual_processed_lengths_list.append(1)
+                        else:
+                            actual_processed_lengths_list.append(new_hidden.shape[0])
+                        h_or_tokens_list.append(new_hidden)
+                    else:
+                        h_or_tokens_list.append(req.hidden_states)
+                        actual_processed_lengths_list.append(req.hidden_states.shape[0])
+                    if req.input_ids is not None:
+                        req.prefill_offset = len(req.input_ids)
 
             block_table = self.cache_manager.get_block_table(req.request_id)
             block_tables_list.append(block_table)

@@ -398,6 +398,16 @@ class BaseExecutor:
         hidden_states = batch_output["hidden_states"]
         token_probs = batch_output["probs"]
 
+        # Check if hidden_states is empty (all requests were filtered out)
+        if hasattr(hidden_states, '__len__') and len(hidden_states) == 0:
+            # Re-enqueue prefill requests that are not yet complete (chunked prefill case)
+            for req in requests:
+                if req.is_prefill and hasattr(req, 'input_ids') and req.input_ids is not None:
+                    if req.prefill_offset < len(req.input_ids):
+                        # Prefill not complete, re-enqueue to continue processing next chunk
+                        self.scheduler.enque_request(req)
+            return []
+
         batched_requests = []
         pre_length = 0
         for i, src_request in enumerate(requests):

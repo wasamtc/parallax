@@ -503,13 +503,16 @@ class CacheManager:
 
         return matched_tokens
 
-    def insert_full_blocks_to_cache(self, request_id: str):
+    def insert_full_blocks_to_cache(self, request_id: str, processed_length: Optional[int] = None):
         """
         Insert full blocks from request to prefix cache.
         Called after prefill or when a block is filled.
 
         Args:
             request_id: Request ID
+            processed_length: Optional processed token length. For chunked prefill, this should be
+                the actual number of tokens processed in this chunk (e.g., prefill_offset).
+                If None, uses context_lengths[request_id] (backward compatibility).
         """
         if not self.prefix_cache or not self.needs_blocks:
             return
@@ -524,7 +527,11 @@ class CacheManager:
         block_table = self.block_tables[request_id]
         context_len = self.context_lengths.get(request_id, 0)
 
-        num_full_blocks = context_len // self.block_size
+        # For chunked prefill, use processed_length if provided
+        if processed_length is not None:
+            num_full_blocks = processed_length // self.block_size
+        else:
+            num_full_blocks = context_len // self.block_size
 
         if num_full_blocks == 0:
             return

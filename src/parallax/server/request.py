@@ -96,6 +96,7 @@ class Request:
         routing_table: Optional[List[str]] = [],
         sampling_params: Optional[SamplingParams] = None,
         lora_path: Optional[str] = None,
+        prefill_offset: int = 0,
     ):
         self.request_id = request_id or str(uuid.uuid4())
         self.status = status
@@ -109,6 +110,7 @@ class Request:
         self.last_updated_time: Optional[float] = None
         self.lora_id: Optional[str] = None
         self.lora_path = lora_path
+        self.prefill_offset = prefill_offset
 
     @property
     def is_finished(self) -> bool:
