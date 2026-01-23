@@ -485,8 +485,10 @@ class SGLExecutor(BaseExecutor):
                             # Prefill not complete yet, use -1 as placeholder
                             logger.debug(
                                 f"Request {req.request_id}: Prefill not complete "
-                                f"(offset={req.prefill_offset}, total={len(req.input_ids)}), skipping token"
+                                f"(offset={req.prefill_offset}, total={len(req.input_ids)}), using -1 placeholder"
                             )
+                            filtered_token_ids.append(-1)
+                            filtered_token_probs.append(None)
                             continue
                 
                 # Prefill complete or decode request, include in output
