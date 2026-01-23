@@ -55,25 +55,17 @@ def transform_requests_to_sglang(
     for old_req in old_requests:
         sampling_params = transform_sampling_params_to_sglang(old_req.sampling_params)
         
-        # For chunked prefill in pipeline parallelism, use actual hidden_states length
+        # For chunked prefill in pipeline parallelism, use prefill_offset
         # to determine how many input_ids to use for intermediate peers
         input_ids_to_use = old_req.input_ids
         if (
             old_req.input_ids is not None
-            and old_req.hidden_states is not None
-            and hasattr(old_req.hidden_states, 'shape')
+            and hasattr(old_req, 'prefill_offset')
+            and old_req.prefill_offset is not None
+            and old_req.prefill_offset < len(old_req.input_ids)
         ):
-            # Check if this is a chunked prefill case (hidden_states length < input_ids length)
-            if old_req.hidden_states.ndim == 2:
-                hidden_len = old_req.hidden_states.shape[0]
-            elif old_req.hidden_states.ndim == 3:
-                hidden_len = old_req.hidden_states.shape[1] if old_req.hidden_states.shape[0] == 1 else old_req.hidden_states.shape[1]
-            else:
-                hidden_len = len(old_req.input_ids) if old_req.input_ids else 0
-            
-            if hidden_len > 0 and hidden_len < len(old_req.input_ids):
-                # Chunked prefill: only use the first hidden_len tokens
-                input_ids_to_use = old_req.input_ids[:hidden_len]
+            # Chunked prefill: use prefill_offset to determine how many tokens to use
+            input_ids_to_use = old_req.input_ids[:old_req.prefill_offset]
         
         req = Req(
             rid=old_req.request_id,

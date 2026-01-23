@@ -617,11 +617,21 @@ class SGLExecutor(BaseExecutor):
                     else None
                 )
             
-            # For chunked prefill in pipeline parallelism, use actual hidden_states length
-            # instead of total_length for intermediate peers
+            # For chunked prefill in pipeline parallelism, use prefill_offset
+            # instead of hidden_states length for intermediate peers
             if not self.is_first_peer and req.hidden_states is not None:
-                # Intermediate peer: use actual hidden_states length (chunk size)
-                if hasattr(req.hidden_states, 'shape'):
+                # Check if this is a chunked prefill case
+                if (
+                    hasattr(req, 'prefill_offset')
+                    and req.prefill_offset is not None
+                    and req.input_ids is not None
+                    and req.prefill_offset < len(req.input_ids)
+                ):
+                    # Chunked prefill: use prefill_offset as actual length
+                    actual_length = req.prefill_offset
+                    lengths.append(actual_length)
+                elif hasattr(req.hidden_states, 'shape'):
+                    # Non-chunked prefill case: use hidden_states length
                     if req.hidden_states.ndim == 2:
                         # (seq_len, hidden_dim)
                         actual_length = req.hidden_states.shape[0]
