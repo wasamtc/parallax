@@ -464,6 +464,7 @@ class SGLExecutor(BaseExecutor):
                 elif self.chunked_req is not None and self.chunked_req.rid == req.request_id and self.chunked_req.is_chunked > 0 and not from_previous_peer:
                         self.chunked_req.is_chunked -= 1
                         req.status = RequestStatus.PREFILLING
+                        self.scheduler.evict_request(req.request_id)
                         continue
                 else:
                     # This is an active request, add it to the scheduler queue to be processed.
